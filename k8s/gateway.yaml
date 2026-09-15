@@ -1,0 +1,157 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bisheng-aigateway-config
+  labels:
+    app.kubernetes.io/name: bisheng-aigateway
+data:
+  ENVIRONMENT: "production"
+  PORT: "8000"
+  WEB_CONCURRENCY: "2"
+  LOG_LEVEL: "INFO"
+  CORS_ORIGINS: "https://gateway.example.com"
+  DB_AUTO_CREATE: "false"
+  DB_REQUIRED: "true"
+  DB_POOL_SIZE: "20"
+  DB_MAX_OVERFLOW: "40"
+  DB_POOL_TIMEOUT: "30"
+  DB_POOL_RECYCLE: "1800"
+  REDIS_CACHE_TTL: "86400"
+  REDIS_MAX_CONNECTIONS: "50"
+  REDIS_CONNECT_TIMEOUT: "3"
+  REDIS_SOCKET_TIMEOUT: "3"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bisheng-aigateway-secrets
+  labels:
+    app.kubernetes.io/name: bisheng-aigateway
+type: Opaque
+stringData:
+  DATABASE_URL: "REPLACE_WITH_DATABASE_URL"
+  REDIS_URL: "REPLACE_WITH_REDIS_URL"
+  JWT_SECRET_KEY: "REPLACE_WITH_JWT_SECRET"
+  EXTERNAL_API_KEY: "REPLACE_WITH_EXTERNAL_API_KEY"
+  UPSTREAM_BEARER_TOKEN: "REPLACE_WITH_UPSTREAM_BEARER_TOKEN"
+  SAFETY_APPKEY: "REPLACE_WITH_SAFETY_APPKEY"
+  SAFETY_SECRET_KEY: "REPLACE_WITH_SAFETY_SECRET_KEY"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bisheng-aigateway
+  labels:
+    app.kubernetes.io/name: bisheng-aigateway
+    app.kubernetes.io/component: aigateway
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bisheng-aigateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bisheng-aigateway
+        app.kubernetes.io/component: aigateway
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: aigateway
+          image: registry.example.com/bisheng/bisheng-aigateway:REPLACE_WITH_IMAGE_TAG
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: bisheng-aigateway-config
+            - secretRef:
+                name: bisheng-aigateway-secrets
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          volumeMounts:
+            - name: logs
+              mountPath: /app/backend/logs
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: logs
+          emptyDir:
+            sizeLimit: 100Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bisheng-aigateway
+  labels:
+    app.kubernetes.io/name: bisheng-aigateway
+    app.kubernetes.io/component: aigateway
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: bisheng-aigateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080
+      protocol: TCP

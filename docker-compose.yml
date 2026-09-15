@@ -1,0 +1,44 @@
+services:
+  gateway:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      # 与 Kubernetes Deployment 的 WEB_CONCURRENCY 注入方式保持一致。
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    env_file:
+      # 本地开发可在 backend/.env 配置 DATABASE_URL 等；该文件不会入镜。
+      - path: backend/.env
+        required: false
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+  # 本地依赖服务示例；生产环境由 Kubernetes Secret/ConfigMap 注入连接地址。
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-gateway}
+      MYSQL_USER: ${MYSQL_USER:-gateway}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in your local environment}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in your local environment}
+    ports: ["3306:3306"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
