@@ -12,12 +12,12 @@ settings = get_settings()
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "service": settings.app_name}
+    return {"status": "UP", "groups": ["liveness", "readiness"]}
 
 
 @router.get("/health/live")
 async def liveness():
-    return {"status": "alive"}
+    return {"status": "UP", "groups": ["liveness","readiness"]}
 
 
 @router.get("/health/ready")

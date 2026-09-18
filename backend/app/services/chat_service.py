@@ -3,6 +3,7 @@ import logging
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 import time
 from typing import Any
 
@@ -18,15 +19,39 @@ from app.utils.safety_guard import SafetyGuard, SafetyGuardError
 from app.services.user import get_principal, update_principal_id
 from app.models.models import ChatSession, ChatMessage
 
-
-
 logger = logging.getLogger(__name__)
-
-client = HTTPClient()
 
 # Do not let a single completed report occupy an unbounded amount of Redis.
 # The database remains the source of truth for chat history.
 MAX_REPORT_CACHE_BYTES = 10 * 1024 * 1024
+INDUSTRY_REPORT_FIXTURE = Path(__file__).with_name("industry_report_fixture.sse")
+
+
+def _load_fixture_events() -> list[dict[str, str]]:
+    """Parse the checked-in industry report SSE fixture into response events."""
+    events: list[dict[str, str]] = []
+    event: dict[str, str] = {}
+    data_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal event, data_lines
+        if data_lines:
+            event["data"] = "\n".join(data_lines)
+            events.append(event)
+        event = {}
+        data_lines = []
+
+    for line in INDUSTRY_REPORT_FIXTURE.read_text(encoding="utf-8").splitlines():
+        if not line:
+            flush()
+        elif line.startswith("event:"):
+            event["event"] = line[len("event:"):].strip()
+        elif line.startswith("id:"):
+            event["id"] = line[len("id:"):].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[len("data:"):].lstrip())
+    flush()
+    return events
 
 
 def _event_text(event_data: str) -> str:
@@ -56,7 +81,8 @@ def _cache_size_bytes(events: list[dict[str, Any]]) -> int:
 # ============================================================
 
 async def get_or_create_principal(user,
-  db: AsyncSession):
+  db: AsyncSession,
+  client: HTTPClient):
     """
     根据当前登录用户获取 principal_id。
 
@@ -74,8 +100,8 @@ async def get_or_create_principal(user,
     """
 
     settings = get_settings()
-    username = user.get("name") if isinstance(user, dict) else getattr(user, "name", None)
-    user_id = user.get("id") or user.get("sub") if isinstance(user, dict) else getattr(user, "id", None)
+    username = user.get("userNo") if isinstance(user, dict) else getattr(user, "name", None)
+    user_id = user.get("userNo") or user.get("userNo") if isinstance(user, dict) else getattr(user, "id", None)
     if not username:
         username = str(user_id or "anonymous")
 
@@ -161,6 +187,8 @@ async def industry_report(
     request: Request,
     user: dict,
     db: AsyncSession,
+    client: HTTPClient
+
 ):
     """
     企业行业分析统一接口。
@@ -179,9 +207,8 @@ async def industry_report(
     
     settings = get_settings()
     claims = user or {}
-    user_id = str(claims.get("sub") or claims.get("id") or "anonymous")
-    user_name = str(claims.get("name") or claims.get("username") or "anonymous")
-    user_department = claims.get("department")
+    userNo = str(claims.get("userNo") or claims.get("userNo") or "anonymous")
+    user_department = claims.get("org")
     request_time = datetime.now(timezone.utc).isoformat()
 
     # Create/reuse a local conversation before any upstream work.  Every API
@@ -191,20 +218,20 @@ async def industry_report(
     session = None
     if data.sessionId:
         session = (await db.execute(select(ChatSession).where(
-            ChatSession.id == data.sessionId, ChatSession.user_id == user_id,
+            ChatSession.id == data.sessionId, ChatSession.user_id == userNo,
         ))).scalar_one_or_none()
         if session is None:
             raise HTTPException(status_code=404, detail="会话不存在")
     if session is None:
         session = ChatSession(
-            user_id=user_id,
+            user_id=userNo,
             user_department=user_department,
             biz_key=data.bizKey,
             title=data.userInput[:255],
             status="active",
             session_type="ai_agent",
             metadata_json={
-                "created_by": user_name,
+                "created_by": userNo,
                 "created_at": request_time,
                 "source": "industry_report",
             },
@@ -216,13 +243,13 @@ async def industry_report(
         role="user",
         content=data.userInput,
         message_type="text",
-        user_id=user_id,
+        user_id=userNo,
         user_department=user_department,
         category="question",
         status="completed",
         metadata_json={
             "source": "industry_report",
-            "user_name": user_name,
+            "user_name": userNo,
             "biz_key": data.bizKey,
             "agent_id": data.agentId or settings.agent_id,
             "request_time": request_time,
@@ -250,7 +277,7 @@ async def industry_report(
                 role=role,
                 content=content,
                 message_type="text",
-                user_id=user_id,
+                user_id=userNo,
                 user_department=user_department,
                 category="answer",
                 parent_id=user_message_id,
@@ -263,18 +290,50 @@ async def industry_report(
             await db.rollback()
             logger.exception("Failed to persist assistant message", extra={
                 "request_id": request_id,
-                "user_id": user_id,
+                "user_id": userNo,
             })
+
+    # fixture_events = _load_fixture_events()
+    # fixture_request_id = "mock-industry-report"
+
+    # async def fixture_stream():
+    #     output_text: list[str] = []
+    #     for event in fixture_events:
+    #         output_text.append(_event_text(event.get("data", "")))
+    #         yield event
+    #         await asyncio.sleep(0)
+    #     await persist_assistant_message(
+    #         "".join(output_text),
+    #         fixture_request_id,
+    #         role="assistant",
+    #         metadata={
+    #             "source": "industry_report_fixture",
+    #             "event_count": len(fixture_events),
+    #         },
+    #     )
+
+    # return EventSourceResponse(
+    #     fixture_stream(),
+    #     ping=15,
+    #     headers={
+    #         "Cache-Control": "no-cache, no-store, must-revalidate",
+    #         "Connection": "keep-alive",
+    #         "X-Accel-Buffering": "no",
+    #         "X-Session-Id": str(local_session_id),
+    #         "X-User-Message-Id": str(user_message_id),
+    #         "X-Request-Id": fixture_request_id,
+    #     },
+    # )
 
     
     params_hash = hashlib.sha256(json.dumps(data.model_dump(), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    cache_key = f"report:{user_id}:{params_hash}"
+    cache_key = f"{userNo}:{params_hash}"
     cache = getattr(request.app.state, "redis", None)
     try:
         cached_events = await cache.get_json(cache_key) if cache else None
     except Exception:
         cached_events = None
-        logger.warning("redis cache read failed", extra={"user_id": user_id, "cache_key": cache_key}, exc_info=True)
+        logger.warning("redis cache read failed", extra={"user_id": userNo, "cache_key": cache_key}, exc_info=True)
     if cached_events:     
         async def cached_stream():
             cached_text: list[str] = []
@@ -298,7 +357,6 @@ async def industry_report(
 
     if settings.safety_filter_enabled:
         try:
-            logger.info("SafetyGuard input analysis for user_id=%s", user_id)
             result = await guard.analyze_input(data.userInput)
         except SafetyGuardError as exc:
             logger.exception("SafetyGuard input analysis failed")
@@ -338,7 +396,7 @@ async def industry_report(
     # ========================================================
 
     try:
-        principal_id = await get_or_create_principal(user, db)
+        principal_id = await get_or_create_principal(user, db,client)
     except Exception as exc:    
         raise HTTPException(
             status_code=500,
@@ -484,7 +542,7 @@ async def industry_report(
                     "SSE first upstream data received",
                     extra={
                         "request_id": str(request_id),
-                        "user_id": user_id,
+                        "user_id": userNo,
                         "ttft_ms": round(
                             (first_token_at - started_at) * 1000,
                             2,
@@ -517,7 +575,7 @@ async def industry_report(
                 "SSE upstream request started",
                 extra={
                     "request_id": str(request_id),
-                    "user_id": user_id,
+                    "user_id": userNo,
                     "session_id": str(local_session_id),
                 },
             )
@@ -670,7 +728,7 @@ async def industry_report(
                 "SSE client disconnected",
                 extra={
                     "request_id": str(request_id),
-                    "user_id": user_id,
+                    "user_id": userNo,
                     "session_id": str(local_session_id),
                 },
             )
@@ -682,12 +740,11 @@ async def industry_report(
         except Exception as exc:
 
             error_message = str(exc)
-
             logger.exception(
                 "SSE stream failed",
                 extra={
                     "request_id": str(request_id),
-                    "user_id": user_id,
+                    "user_id": userNo,
                     "session_id": str(local_session_id),
                     "error": error_message,
                 },
@@ -731,7 +788,7 @@ async def industry_report(
                 "SSE stream finished",
                 extra={
                     "request_id": str(request_id),
-                    "user_id": user_id,
+                    "user_id": userNo,
                     "session_id": str(local_session_id),
                     "completed": completed,
                     "cancelled": cancelled,
@@ -786,7 +843,7 @@ async def industry_report(
                             "Redis cache write failed",
                             extra={
                                 "request_id": str(request_id),
-                                "user_id": user_id,
+                                "user_id": userNo,
                                 "cache_key": cache_key,
                             },
                         )

@@ -1,19 +1,20 @@
 import hashlib
+import logging
 from pydoc import plain
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import bcrypt
-from jose import JWTError, jwt
+from jose import JWTError
+import jwt
 from passlib.context import CryptContext
 from app.core.config import get_settings
 from app.exceptions.errors import AuthenticationError
-
+import base64
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+logger = logging.getLogger(__name__)
 
-def hash_password(password: str) -> str:
-    """Hash a plaintext password using bcrypt."""
 def hash_password(password: str) -> str:
     pwd_bytes = password.encode("utf-8")[:72]  # 按字节截断到72
     return bcrypt.hashpw(pwd_bytes, bcrypt.gensalt()).decode("utf-8")
@@ -52,19 +53,19 @@ def create_token(
         if settings.jwt_algorithm == "RS256"
         else settings.jwt_secret_key
     )
-
+    deconded_key = base64.b64decode(key)
     payload = {
         "sub": subject,
         "type": token_type,
-        "iss": settings.jwt_issuer,
-        "aud": settings.jwt_audience,
+        # "iss": settings.jwt_issuer,
+        # "aud": settings.jwt_audience,
         "iat": now,
         "exp": exp,
         "jti": secrets.token_hex(16),
-        "name": user_name,
+        "userNo": user_name,
     }
 
-    return jwt.encode(payload, key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, deconded_key, algorithm=settings.jwt_algorithm)
 
 
 def decode_token(
@@ -78,19 +79,14 @@ def decode_token(
         if settings.jwt_algorithm == "RS256"
         else settings.jwt_secret_key
     )
-
+    deconded_key=base64.b64decode(key)
+    logger.info(f"jwt_secret_key,{deconded_key},token is value,{token}")
     try:
         payload = jwt.decode(
             token,
-            key,
-            algorithms=[settings.jwt_algorithm],
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
+            deconded_key,
+            algorithms=[settings.jwt_algorithm],      
         )
-
-        if expected_type and payload.get("type") != expected_type:
-            raise AuthenticationError("Invalid token type")
-
         return payload
 
     except (JWTError, ValueError) as e:

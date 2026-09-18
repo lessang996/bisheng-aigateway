@@ -20,9 +20,6 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     user = await authenticate(db, data.username, data.password)
-    if not user:
-        raise AuthenticationError("Invalid username or password")
-
     return {
         "access_token": create_token(str(user.id), user.username),
         "refresh_token": create_token(str(user.id), user.username, "refresh"),

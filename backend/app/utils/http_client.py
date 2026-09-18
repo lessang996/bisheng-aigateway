@@ -4,6 +4,7 @@ import logging
 from typing import Optional, Dict, Any
 
 
+from fastapi import Request
 import httpx
 
 from app.core.config import get_settings
@@ -243,9 +244,6 @@ class HTTPClient:
     async def close(self):
         await self.client.aclose()
 
-
-
-    
     @contextlib.asynccontextmanager
     async def stream(
         self,
@@ -368,3 +366,19 @@ class HTTPClient:
                 "External service stream request failed",
                 str(exc),
             ) from exc
+        
+    async def close(self):
+        await self.client.aclose()
+
+    
+def create_http_client() -> HTTPClient:
+    return HTTPClient()
+
+
+async def get_http_client(request: Request) -> HTTPClient:
+    client = getattr(request.app.state, "http_client", None)
+
+    if client is None:
+        raise RuntimeError("HTTP client is not initialized")
+
+    return client

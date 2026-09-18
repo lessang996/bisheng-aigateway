@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 1800
     db_required: bool = False
     db_auto_create: bool = True
-    jwt_secret_key: str = 'change-me-in-production'
+    jwt_secret_key: str = 'a3VpY2tfYnJvd25fZm94X2p1bXBzX292ZXJfdGHlX2xhenlfZG9nXzEyMzQ1Njc4OTA='
     jwt_algorithm: str = 'HS256'
-    jwt_public_key: str = ''
+    jwt_public_key: str = 'a3VpY2tfYnJvd25fZm94X2p1bXBzX292ZXJfdGHlX2xhenlfZG9nXzEyMzQ1Njc4OTA='
     jwt_issuer: str = 'bisheng-gateway'
     jwt_audience: str = 'bisheng-client'
     access_token_expire_minutes: int = 30
@@ -43,10 +43,10 @@ class Settings(BaseSettings):
     upstream_bearer_token: str = 'dk_WS9UDNoFb6OeuR6hAunWHKQEJTxu2Ee0'
     agent_id: int = 880717454599216379
     safety_filter_enabled: bool = True
-    safety_base_url: str = 'http://172.19.127.4:3567'
-    safety_appkey: str = '123'
-    safety_secret_key: str = '321'
-    safety_template_id: str = '1234567'
+    safety_base_url: str = ''
+    safety_appkey: str = ''
+    safety_secret_key: str = ''
+    safety_template_id: str = ''
     safety_timeout: float = 60
     redis_url: str = 'redis://:1234@localhost:6379/0'
     # Completed report SSE cache lifetime in seconds (one day by default).

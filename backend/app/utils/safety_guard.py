@@ -6,6 +6,7 @@ import hmac
 import logging
 from typing import Any, Optional
 from urllib.parse import urlencode
+from fastapi import Depends
 import httpx
 from app.core.config import Settings
 from app.core.bce_auth import get_tokens

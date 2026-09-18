@@ -8,7 +8,7 @@ from app.apis.router import api_router
 from app.core.config import get_settings
 from app.core.logger import setup_logging
 from app.core.redis import get_report_cache
-from app.db.session import check_database, engine, init_db
+from app.db.session import check_database, close_database, engine, init_db
 from app.exceptions.errors import GatewayError
 from app.exceptions.handlers import gateway_exception_handler
 from app.middleware import (
@@ -18,6 +18,7 @@ from app.middleware import (
     RequestContextMiddleware,
     SensitiveFilterMiddleware,
 )
+from app.utils.http_client import create_http_client
 
 settings = get_settings()
 setup_logging()
@@ -66,6 +67,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None,None]:
         )
 
     # TODO: 初始化其他全局资源 (HTTP Client, Model Client 等)
+    app.state.http_client = create_http_client()
+    logger.info("http client initialized")
     logger.info("gateway startup completed")
 
     try:
@@ -73,14 +76,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None,None]:
     finally:
         # --- Shutdown ---
         logger.info("gateway shutdown started")
+        http_client = getattr(app.state, "http_client", None)
+        if http_client:
+            try:
+                await http_client.close()
+            except Exception:
+                logger.warning(
+                    "http client shutdown failed",
+                    exc_info=True,
+                )
+                
 
         if app.state.redis is not None:
             try:
                 await app.state.redis.close()
             except Exception:
                 logger.warning("redis shutdown failed", exc_info=True)
+     
+        try:
+            await close_database()
+        except Exception:
+            logger.warning(
+                "database engine shutdown failed",
+                exc_info=True,
+            )
 
-        await engine.dispose()
         logger.info("gateway shutdown completed")
 
 
@@ -92,6 +112,10 @@ app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     lifespan=lifespan,
+    openapi_url="/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    root_path_in_servers=False,
 )
 
 # ============================================================

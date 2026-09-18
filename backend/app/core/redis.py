@@ -108,7 +108,7 @@ def get_report_cache() -> RedisCache:
             key_prefix=getattr(
                 settings,
                 "redis_cache_key_prefix",
-                "report:",
+                "cqcba:",
             ),
             max_connections=settings.redis_max_connections,
             socket_connect_timeout=settings.redis_connect_timeout,

@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
 from app.core.config import get_settings
-from app.models.base import Base
 
 settings = get_settings()
 engine_options = {"pool_pre_ping": True, "echo": False}
@@ -39,3 +38,11 @@ async def check_database() -> bool:
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
     return True
+
+
+async def close_database() -> None:
+    """
+    关闭数据库连接池。
+    """
+
+    await engine.dispose()
