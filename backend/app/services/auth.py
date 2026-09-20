@@ -23,7 +23,6 @@ async def authenticate(
         select(User).where(User.username == username)
     )
     user = result.scalar_one_or_none()
-
     # 用户不存在，自动创建
     if user is None:
         user = User(

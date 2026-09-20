@@ -13,4 +13,14 @@ env/
 .venv/
 
 # VSCode
+<<<<<<< HEAD
 .vscode/
+=======
+.vscode/
+
+__pycache__/
+*.pyc
+
+# 忽略日志文件
+*.log
+>>>>>>> 45d2f40 (日志输出用户)
