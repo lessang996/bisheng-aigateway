@@ -11,11 +11,8 @@ __pycache__/
 venv/
 env/
 .venv/
-
+.pytest_cache/
 # VSCode
-<<<<<<< HEAD
-.vscode/
-=======
 .vscode/
 
 __pycache__/
@@ -23,4 +20,3 @@ __pycache__/
 
 # 忽略日志文件
 *.log
->>>>>>> 45d2f40 (日志输出用户)
