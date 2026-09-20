@@ -1,4 +1,8 @@
-# Python 
+# Runtime logs
+/logs/
+backend/logs/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo

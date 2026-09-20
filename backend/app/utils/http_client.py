@@ -1,16 +1,24 @@
 import asyncio
 import contextlib
 import logging
-from typing import Optional, Dict, Any
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
-
-from fastapi import Request
 import httpx
+from fastapi import Request
 
 from app.core.config import get_settings
 from app.exceptions.errors import ExternalServiceError
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_url(url: str) -> str:
+    """Return a URL suitable for logs without query parameters or fragments."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
 class CircuitBreaker:
     """
     简单的熔断器
@@ -25,7 +33,7 @@ class CircuitBreaker:
         self.threshold = threshold
         self.recovery = recovery
         self.failures = 0
-        self.opened_at: Optional[float] = None
+        self.opened_at: float | None = None
 
     def allow(self) -> bool:
         now = asyncio.get_running_loop().time()
@@ -114,8 +122,8 @@ class HTTPClient:
 
     def _build_headers(
         self,
-        headers: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, str]:
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, str]:
         """
         构造请求 Header
 
@@ -148,7 +156,7 @@ class HTTPClient:
         method: str,
         url: str,
         *,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
 
@@ -158,7 +166,7 @@ class HTTPClient:
             )
 
         request_headers = self._build_headers(headers)
-        logger.info('HTTPClient request method=%s url=%s headers=%s', method, url, request_headers)
+        logger.info('HTTPClient request method=%s url=%s', method, _safe_url(url))
         last_exception = None
 
         retry_count = self.settings.external_retries
@@ -187,7 +195,6 @@ class HTTPClient:
                     raise ExternalServiceError(
                         f"External service returned "
                         f"{exc.response.status_code}",
-                        str(exc),
                     ) from exc
 
             except httpx.TimeoutException as exc:
@@ -210,7 +217,6 @@ class HTTPClient:
 
         raise ExternalServiceError(
             "External service request failed",
-            str(last_exception),
         ) from last_exception
 
     async def get(self, url: str, **kwargs):
@@ -241,16 +247,13 @@ class HTTPClient:
             **kwargs,
         )
 
-    async def close(self):
-        await self.client.aclose()
-
     @contextlib.asynccontextmanager
     async def stream(
         self,
         method: str,
         url: str,
         *,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
         """
@@ -271,10 +274,9 @@ class HTTPClient:
 
         logger.info(
             "HTTPClient stream request "
-            "method=%s url=%s headers=%s",
+            "method=%s url=%s",
             method,
-            url,
-            request_headers,
+            _safe_url(url),
         )
 
         # SSE 长连接不设置 read timeout
@@ -298,24 +300,10 @@ class HTTPClient:
                 # HTTP 状态码检查
                 if response.status_code >= 400:
 
-                    body = await response.aread()
-
-                    body_text = body.decode(
-                        "utf-8",
-                        errors="replace",
-                    )
-
-                    if response.status_code < 500:
-                        raise ExternalServiceError(
-                            f"External service returned "
-                            f"{response.status_code}",
-                            body_text,
-                        )
-
+                    await response.aread()
                     raise ExternalServiceError(
                         f"External service returned "
                         f"{response.status_code}",
-                        body_text,
                     )
 
                 # SSE HTTP 连接建立成功
@@ -328,7 +316,7 @@ class HTTPClient:
                 "HTTPClient stream cancelled "
                 "method=%s url=%s",
                 method,
-                url,
+                _safe_url(url),
             )
             raise
 
@@ -339,38 +327,33 @@ class HTTPClient:
 
             self.breaker.failure()
 
-            logger.exception(
-                "HTTPClient stream timeout "
-                "method=%s url=%s",
+            logger.warning(
+                "HTTPClient stream timeout method=%s url=%s error=%s",
                 method,
-                url,
+                _safe_url(url),
+                type(exc).__name__,
             )
 
-            raise ExternalServiceError(
-                "External service stream timeout",
-                str(exc),
-            ) from exc
+            raise ExternalServiceError("External service stream timeout") from exc
 
         except httpx.RequestError as exc:
 
             self.breaker.failure()
 
-            logger.exception(
-                "HTTPClient stream request failed "
-                "method=%s url=%s",
+            logger.warning(
+                "HTTPClient stream request failed method=%s url=%s error=%s",
                 method,
-                url,
+                _safe_url(url),
+                type(exc).__name__,
             )
 
-            raise ExternalServiceError(
-                "External service stream request failed",
-                str(exc),
-            ) from exc
-        
+            raise ExternalServiceError("External service stream request failed") from exc
+
     async def close(self):
         await self.client.aclose()
 
-    
+
+
 def create_http_client() -> HTTPClient:
     return HTTPClient()
 

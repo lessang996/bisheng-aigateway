@@ -1,15 +1,16 @@
 """Baidu LLM safety guard client (multi-tenant BCE authentication)."""
 
-from datetime import datetime, timezone
 import hashlib
 import hmac
 import logging
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import urlencode
-from fastapi import Depends
+
 import httpx
-from app.core.config import Settings
+
 from app.core.bce_auth import get_tokens
+from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class SafetyGuard:
     def __init__(
         self,
         settings: Settings,
-        client: Optional[httpx.AsyncClient] = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.settings = settings
         # 允许外部注入 httpx 客户端，便于测试复用连接池；
@@ -110,19 +111,14 @@ class SafetyGuard:
         endpoint: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        """发送安全检测请求并解析响应。
-
-        🛡️ 降级策略：当 base_url / appkey / secret_key 任一缺失时，
-        直接返回 {"isSafe": 1, "action": 0}（视为安全），
-        避免安全组件未配置时阻断主业务流程。
-        """
-        # ---- 配置缺失时优雅降级 ----
+        """发送安全检测请求并解析响应。配置缺失时安全失败。"""
         if not all([
             self.settings.safety_base_url,
             self.settings.safety_appkey,
             self.settings.safety_secret_key,
+            self.settings.safety_template_id,
         ]):
-            return {"isSafe": 1, "action": 0}
+            raise SafetyGuardError("安全护栏配置不完整")
 
         # ---- 生成签名请求头 ----  
         ts = int(datetime.now(timezone.utc).timestamp())
@@ -139,8 +135,6 @@ class SafetyGuard:
         else:
             raise SafetyGuardError(f"get_tokens 返回了无效的 headers 格式: {type(auth_header)}")
 
-        logger.info("安全护栏请求auth_header: %s", auth_header)
-
         # appkey + timestamp 作为 query string 传递（BCE 规范要求）
         query = urlencode({
             "appkey": self.settings.safety_appkey,
@@ -150,7 +144,7 @@ class SafetyGuard:
             f"{self.settings.safety_base_url.rstrip('/')}"
             f"/llm/{endpoint}?{query}"
         )
-        logger.info("安全护栏请求 URL: %s, payload: %s", url, payload)
+        logger.info("安全护栏请求 endpoint=%s", endpoint)
         try:
             response = await self.client.post(
                 url,
@@ -161,14 +155,19 @@ class SafetyGuard:
             )
             response.raise_for_status()
             result = response.json()
-        except Exception as exc:
-            raise SafetyGuardError(f"安全护栏请求失败: {exc}") from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "安全护栏请求失败 endpoint=%s error=%s",
+                endpoint,
+                type(exc).__name__,
+            )
+            raise SafetyGuardError("安全护栏请求失败") from exc
 
         # ---- 业务状态码校验（兼容 ret_code/code 两种字段命名）----
         ret_code = str(result.get("ret_code", result.get("code", 0)))
         if ret_code != "0":
-            msg = result.get("ret_msg", result.get("msg", "安全护栏返回失败"))
-            raise SafetyGuardError(msg)
+            logger.warning("安全护栏返回失败 endpoint=%s code=%s", endpoint, ret_code)
+            raise SafetyGuardError("安全护栏返回失败")
 
         # 兼容 ret_data/data 两种响应体结构
         return result.get("ret_data") or result.get("data") or {}

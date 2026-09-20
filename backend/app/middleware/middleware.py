@@ -9,22 +9,22 @@ from starlette.responses import Response
 
 from app.core.config import get_settings
 from app.core.security import decode_token
+from app.exceptions.errors import AuthenticationError
 
 
 class JWTMiddleware(BaseHTTPMiddleware):
-    """Optionally decodes a bearer/query token and exposes claims on request.state."""
+    """Optionally decodes a bearer access token and exposes its claims."""
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         auth_header = request.headers.get("Authorization", "")
-        token = request.query_params.get("token") or auth_header.removeprefix(
-            "Bearer "
-        ).strip()
+        scheme, _, credentials = auth_header.partition(" ")
+        token = credentials.strip() if scheme.lower() == "bearer" else ""
 
         request.state.user = None
         if token:
             try:
-                request.state.user = decode_token(token)
-            except Exception:
+                request.state.user = decode_token(token, expected_type="access")
+            except AuthenticationError:
                 pass
 
         return await call_next(request)

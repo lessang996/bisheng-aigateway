@@ -17,10 +17,12 @@ docker run -d --name bisheng-gateway --restart=unless-stopped \
   -p 8000:8000 -e ENVIRONMENT=production -e DB_AUTO_CREATE=false \
   -e DATABASE_URL='mysql+aiomysql://USER:PASSWORD@mysql:3306/gateway?charset=utf8mb4' \
   -e REDIS_URL='redis://:PASSWORD@redis:6379/0' \
-  -e JWT_SECRET_KEY='use-a-long-random-secret' \
+  -e JWT_SECRET_KEY='<BASE64_OF_AT_LEAST_32_RANDOM_BYTES>' \
   -e EXTERNAL_API_URL='https://router.fis.aliyuncs.com/finx/api' \
   -e EXTERNAL_API_KEY='...' -e UPSTREAM_BEARER_TOKEN='...' \
   bisheng-gateway:<version>
 ```
+
+HS256 密钥可通过 `openssl rand -base64 48` 生成。不要把生成结果写入仓库、镜像或部署文档。
 
 在发布流水线中先执行 `docker run --rm --entrypoint alembic bisheng-gateway:<version> -c /app/backend/alembic.ini upgrade head`，再启动应用。MySQL 和 Redis 应使用独立的持久化生产服务。健康检查使用 `/health/live`，流量接入应等待 `/health/ready` 返回 200；通过 `WEB_CONCURRENCY` 调整 worker 数量。

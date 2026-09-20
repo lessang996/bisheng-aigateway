@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,35 +7,20 @@ from app.core.security import decode_token
 from app.db.session import get_db
 from app.exceptions.errors import AuthenticationError
 
-from typing import Optional
-
-
-
 logger = logging.getLogger(__name__)
 
 
-def extract_token(request: Request) -> Optional[str]:
+def extract_token(request: Request) -> str | None:
     """
     提取 JWT Token。
 
-    支持：
-
-    1. Authorization: Bearer <token>
-    2. Authorization: <token>
-    3. ?token=<token>
-
-    优先级：
-        Bearer Header
-        ↓
-        Authorization Header
-        ↓
-        Query Parameter
+    仅支持标准 Authorization: Bearer <token>，避免 Token 出现在 URL、
+    浏览器历史、代理日志和访问日志中。
     """
 
     auth_header = request.headers.get("Authorization", "").strip()
 
     if auth_header:
-        # Authorization: Bearer <token>
         scheme, _, credentials = auth_header.partition(" ")
 
         if scheme.lower() == "bearer":
@@ -44,20 +28,6 @@ def extract_token(request: Request) -> Optional[str]:
 
             if token:
                 return token
-
-        # Authorization: <token>
-        # 没有 Bearer 前缀时，直接把整个 Header 当 Token
-        if " " not in auth_header:
-            return auth_header
-
-    # ?token=<token>
-    token = request.query_params.get("token")
-
-    if token:
-        token = token.strip()
-
-        if token:
-            return token
 
     return None
 
@@ -82,7 +52,7 @@ async def current_user(
             token,
             expected_type="access",
         )
-    except Exception as exc:
+    except AuthenticationError as exc:
         logger.warning(
             "JWT authentication failed path=%s error=%s",
             request.url.path,
@@ -91,5 +61,5 @@ async def current_user(
         raise AuthenticationError(
             "Invalid or expired token"
         ) from exc
-    
+
     return payload

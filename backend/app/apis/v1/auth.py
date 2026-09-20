@@ -1,12 +1,13 @@
 import logging
 from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.apis.deps import extract_token
-from app.exceptions.errors import AuthenticationError
 from app.core.security import create_token, decode_token
 from app.db.session import get_db
+from app.exceptions.errors import AuthenticationError
 from app.schemas import LoginRequest, TokenResponse, VerifyResponse
 from app.services.auth import authenticate, revoke, revoked
 
@@ -53,7 +54,7 @@ async def verify(
     if not token or await revoked(db, token):
         raise AuthenticationError("Token revoked")
 
-    payload = decode_token(token)
+    payload = decode_token(token, "access")
     return {
         "valid": True,
         "subject": payload["sub"],
@@ -67,6 +68,8 @@ async def revoke_token(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     token = extract_token(request)
-    payload = decode_token(token)
+    if not token:
+        raise AuthenticationError("Authentication required")
+    payload = decode_token(token, "access")
     await revoke(db, token, payload)
     return {"message": "revoked"}
