@@ -112,9 +112,9 @@ app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     lifespan=lifespan,
-    openapi_url="/openapi.json",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # openapi_url="/openapi.json",
+    # docs_url="/docs",
+    # redoc_url="/redoc",
     root_path_in_servers=False,
 )
 

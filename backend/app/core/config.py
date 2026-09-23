@@ -17,8 +17,6 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 1800
     db_required: bool = False
     db_auto_create: bool = True
-    # Secrets and keys must be supplied by the deployment environment.
-    # HS256 uses a base64-encoded secret. RS256 uses PEM private/public keys.
     jwt_secret_key: str = ''
     jwt_algorithm: str = 'HS256'
     jwt_private_key: str = ''
@@ -53,12 +51,14 @@ class Settings(BaseSettings):
     safety_template_id: str = ''
     safety_timeout: float = 60
     redis_url: str = 'redis://localhost:6379/0'
-    # Completed report SSE cache lifetime in seconds (one day by default).
     redis_cache_ttl: int = 86400
     redis_max_connections: int = 50
     redis_connect_timeout: float = 3.0
     redis_socket_timeout: float = 3.0
     redis_health_check_interval: int = 30
+    max_polls: int = 70
+    poll_interval: float = 5.0
+    nonstream_use: bool = True
 
     @field_validator('jwt_algorithm')
     @classmethod

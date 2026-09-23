@@ -52,6 +52,7 @@ async def current_user(
             token,
             expected_type="access",
         )
+        print(payload)
     except AuthenticationError as exc:
         logger.warning(
             "JWT authentication failed path=%s error=%s",

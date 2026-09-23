@@ -7,6 +7,7 @@ class IndustryReportRequest(BaseModel):
     sessionId: Optional[int] = Field(None, ge=1)
     bizKey: Optional[str] = Field(None, min_length=1, max_length=255)
     agentId: Optional[int] = Field(None, ge=1)
+    stream: bool = False
 
     @field_validator("userInput")
     @classmethod

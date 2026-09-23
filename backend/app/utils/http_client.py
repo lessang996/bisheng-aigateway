@@ -308,7 +308,7 @@ class HTTPClient:
 
                 # SSE HTTP 连接建立成功
                 self.breaker.success()
-
+          
                 yield response
 
         except asyncio.CancelledError:

@@ -1,44 +1,61 @@
 services:
   gateway:
     build: .
-    ports: ["8000:8000"]
+    container_name: bisheng-gateway
+    ports: ["${PORT:-8000}:${PORT:-8000}"]
+    volumes:
+      # 挂载日志目录到宿主机以便持久化与采集
+      - ./logs:/app/backend/logs
     environment:
-      # 与 Kubernetes Deployment 的 WEB_CONCURRENCY 注入方式保持一致。
+      # 应用基础配置
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      APP_NAME: ${APP_NAME:-Bisheng Gateway}
+      PORT: ${PORT:-8000}
+      HOST: ${HOST:-0.0.0.0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      
+      # 数据库配置（必需生产环境配置）
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:///./gateway.db}
+      DB_REQUIRED: ${DB_REQUIRED:-false}
+      DB_AUTO_CREATE: ${DB_AUTO_CREATE:-true}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+      
+      # Redis 缓存配置
+      REDIS_URL: ${REDIS_URL:-redis://localhost:6379/0}
+      REDIS_CACHE_TTL: ${REDIS_CACHE_TTL:-86400}
+      
+      # JWT & 安全配置
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      
+      # 上游 API 配置
+      EXTERNAL_API_URL: ${EXTERNAL_API_URL:-https://router.fis.aliyuncs.com/finx/api}
+      EXTERNAL_API_KEY: ${EXTERNAL_API_KEY}
+      
+      # CORS 配置
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      
+      # 性能与限流配置
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      RATE_LIMIT: ${RATE_LIMIT:-60/minute}
+      
+      # 安全审核配置
+      SAFETY_FILTER_ENABLED: ${SAFETY_FILTER_ENABLED:-true}
+      SAFETY_BASE_URL: ${SAFETY_BASE_URL}
+      SAFETY_APPKEY: ${SAFETY_APPKEY}
+      SAFETY_SECRET_KEY: ${SAFETY_SECRET_KEY}
+      
     env_file:
-      # 本地开发可在 backend/.env 配置 DATABASE_URL 等；该文件不会入镜。
+      # 本地开发可在 backend/.env 配置；不会入镜
       - path: backend/.env
         required: false
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${PORT:-8000}/health/live', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-  # 本地依赖服务示例；生产环境由 Kubernetes Secret/ConfigMap 注入连接地址。
-  mysql:
-    image: mysql:8.0
-    environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-gateway}
-      MYSQL_USER: ${MYSQL_USER:-gateway}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in your local environment}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in your local environment}
-    ports: ["3306:3306"]
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+    
+    restart: unless-stopped

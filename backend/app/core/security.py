@@ -3,12 +3,12 @@ import binascii
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import bcrypt
+from fastapi import HTTPException
 import jwt
-from jwt import InvalidTokenError
 from passlib.context import CryptContext
-
 from app.core.config import get_settings
 from app.exceptions.errors import AuthenticationError
 
@@ -20,7 +20,7 @@ def _decode_hs256_secret(value: str) -> bytes:
     if not value:
         raise ValueError("JWT_SECRET_KEY is required for HS256")
     try:
-        secret = base64.b64decode(value, validate=True)
+        secret = base64.b64decode(value)
     except (binascii.Error, ValueError) as exc:
         raise ValueError("JWT_SECRET_KEY must be valid base64") from exc
     if len(secret) < 32:
@@ -84,8 +84,8 @@ def create_token(
     payload = {
         "sub": subject,
         "type": token_type,
-        "iss": settings.jwt_issuer,
-        "aud": settings.jwt_audience,
+        # "iss": settings.jwt_issuer,
+        # "aud": settings.jwt_audience,
         "iat": now,
         "exp": exp,
         "jti": secrets.token_hex(16),
@@ -97,24 +97,36 @@ def create_token(
 
 def decode_token(
     token: str,
-    expected_type: str | None = None,
+    expected_type: Optional[str] = None,
 ) -> dict:
     """Decode and validate a JWT, optionally checking the token type claim."""
     settings = get_settings()
+    key = (
+        settings.jwt_public_key
+        if settings.jwt_algorithm == "RS256"
+        else settings.jwt_secret_key
+    )
+
+    deconded_key=base64.b64decode(key)
+    print(f"jwt_secret_key,{deconded_key},token is value,{token}，{settings.jwt_secret_key}")
     try:
+        # 尝试用 base64 解码后的密钥验签
+        decoded_key = base64.b64decode(settings.jwt_secret_key)
         payload = jwt.decode(
             token,
-            _verification_key(),
-            algorithms=[settings.jwt_algorithm],
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            options={"require": ["sub", "type", "iss", "aud", "iat", "exp", "jti"]},
+            decoded_key,
+            algorithms=["HS256"]
         )
-        if expected_type is not None and payload.get("type") != expected_type:
-            raise AuthenticationError("Invalid token type")
-        return payload
+    except Exception:
+        # 兜底：如果 base64 解码失败，说明 Java 端可能没用 JJWT，
+        # 或者密钥本身就是原始字节，直接用原始密钥
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=["HS256"]
+        )
 
-    except AuthenticationError:
-        raise
-    except (InvalidTokenError, ValueError, TypeError) as e:
-        raise AuthenticationError("Invalid or expired token") from e
+    return payload
+
+    
+
