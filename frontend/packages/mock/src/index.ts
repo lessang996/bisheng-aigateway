@@ -1,0 +1,3 @@
+import type { DashboardMetric } from '@bisheng/types'
+export const mockMetrics: DashboardMetric[] = [{ label: '今日请求量', value: '12,846', change: '+12.6%', tone: 'blue' }, { label: '运行中 Agent', value: '18', change: '2 个待发布', tone: 'violet' }, { label: 'Token 使用量', value: '2.84M', change: '+8.2%', tone: 'orange' }, { label: '请求成功率', value: '99.82%', change: '+0.14%', tone: 'green' }]
+export const mockHealth = [{ name: 'Gateway API', detail: '运行正常', latency: '12ms' }, { name: 'Redis', detail: '运行正常', latency: '3ms' }, { name: 'BiSheng 服务', detail: '运行正常', latency: '86ms' }, { name: 'LLM Provider', detail: '轻微波动', latency: '1.2s' }]

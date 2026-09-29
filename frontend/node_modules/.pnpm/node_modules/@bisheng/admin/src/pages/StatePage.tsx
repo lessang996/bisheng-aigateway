@@ -1,0 +1,1 @@
+export default function StatePage({ title, description }: { title: string; description: string }) { return <section className="panel" style={{ maxWidth: 680 }}><p className="eyebrow">AI GATEWAY</p><h1>{title}</h1><p>{description}</p></section> }

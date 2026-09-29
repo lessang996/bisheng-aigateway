@@ -5,7 +5,7 @@ from app.db.session import get_db
 from app.models.models import SensitiveRule
 from app.schemas import SensitiveRuleCreate, LogLevelRequest
 from app.apis.deps import current_user
-router = APIRouter(prefix='/admin', tags=['admin'])
+router = APIRouter(prefix='/api/admin', tags=['admin'])
 @router.post('/sensitive-rules')
 async def add_rule(data: SensitiveRuleCreate, db: AsyncSession=Depends(get_db), user=Depends(current_user)):
     rule = SensitiveRule(**data.model_dump()); db.add(rule); await db.commit(); await db.refresh(rule); return {'id': rule.id}

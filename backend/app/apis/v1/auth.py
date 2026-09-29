@@ -11,7 +11,7 @@ from app.exceptions.errors import AuthenticationError
 from app.schemas import LoginRequest, TokenResponse, VerifyResponse
 from app.services.auth import authenticate, revoke, revoked
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
 
 

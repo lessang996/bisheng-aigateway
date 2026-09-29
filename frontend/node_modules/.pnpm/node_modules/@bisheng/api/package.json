@@ -1,0 +1,1 @@
+{ "name": "@bisheng/api", "version": "1.0.0", "private": true, "type": "module", "exports": { ".": "./src/index.ts" }, "scripts": { "typecheck": "tsc --noEmit" }, "dependencies": { "@bisheng/auth": "workspace:*", "@bisheng/config": "workspace:*", "@bisheng/types": "workspace:*", "@bisheng/sse": "workspace:*" } }
