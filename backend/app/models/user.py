@@ -10,6 +10,8 @@ class User(SQLModel, table=True):
     email: str = Field(max_length=255, unique=True, index=True)
     department: Optional[str] = Field(default=None, max_length=100, index=True)
     password_hash: str = Field(max_length=255)
+    is_active: bool = Field(default=True)
+    local_login_enabled: bool = Field(default=True)
     created_at: Optional[datetime] = Field(default=None, sa_column_kwargs={"server_default": func.now()})
     updated_at: Optional[datetime] = Field(default=None, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
     employee_id: Optional[str] = Field(default=None, max_length=50, unique=True, index=True)

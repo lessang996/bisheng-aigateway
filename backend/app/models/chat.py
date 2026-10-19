@@ -9,6 +9,7 @@ class ChatSession(SQLModel, table=True):
     __table_args__ = (Index("ix_chat_sessions_user_created", "user_id", "created_at"), Index("ix_chat_sessions_user_biz_key", "user_id", "biz_key"))
     id: int = Field(default=None, primary_key=True)
     user_id: str = Field(max_length=255, index=True)
+    local_user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
     user_department: Optional[str] = Field(default=None, index=True)
     biz_key: Optional[str] = Field(
         default=None,
@@ -45,14 +46,23 @@ class ChatSession(SQLModel, table=True):
 
 class ChatMessage(SQLModel, table=True):
     __tablename__ = "chat_messages"
-    __table_args__ = (Index("ix_chat_messages_session_sequence", "session_id"), Index("ix_chat_messages_session_created", "session_id", "created_at"))
+    __table_args__ = (Index("ix_chat_messages_session_sequence", "session_id"), Index("ix_chat_messages_session_created", "session_id", "created_at"), Index("ix_chat_messages_business_created", "business_type", "created_at"), Index("ix_chat_messages_department_created", "user_department", "created_at"))
     id: int = Field(default=None, primary_key=True)
     session_id: int = Field(foreign_key="chat_sessions.id", index=True)
     role: str = Field(max_length=20, index=True,description="角色，user/assistant/system")
 
-    content: Optional[str] = Field(default=None, sa_type=LONGTEXT)
+    content: Optional[str] = Field(default=None, sa_type=Text().with_variant(LONGTEXT(), "mysql"))
     message_type: str = Field(default="text", max_length=32)
     user_id: Optional[str] = Field(default=None, index=True)
+    local_user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    business_type: Optional[str] = Field(default=None, max_length=32, index=True)
+    is_stream: Optional[bool] = Field(default=None)
+    cache_status: str = Field(default="unknown", max_length=20, index=True)
+    execution_status: str = Field(default="unknown", max_length=20, index=True)
+    completed_at: Optional[datetime] = Field(default=None)
+    duration_ms: Optional[float] = Field(default=None)
+    error_code: Optional[str] = Field(default=None, max_length=64)
+    error_summary: Optional[str] = Field(default=None, max_length=255)
     user_department: Optional[str] = Field(default=None, index=True)
     parent_id: Optional[int] = Field(
         default=None,

@@ -1,66 +1,58 @@
 import logging
-
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlmodel import select
 from app.core.security import decode_token
 from app.db.session import get_db
-from app.exceptions.errors import AuthenticationError
+from app.exceptions.errors import AuthenticationError, AuthorizationError
+from app.models.models import User
+from app.services.auth import revoked
+from app.services.rbac import access_for, provision_user
 
 logger = logging.getLogger(__name__)
 
 
 def extract_token(request: Request) -> str | None:
-    """
-    提取 JWT Token。
+    scheme, _, value = request.headers.get('Authorization', '').strip().partition(' ')
+    return value.strip() or None if scheme.lower() == 'bearer' else None
 
-    仅支持标准 Authorization: Bearer <token>，避免 Token 出现在 URL、
-    浏览器历史、代理日志和访问日志中。
-    """
 
-    auth_header = request.headers.get("Authorization", "").strip()
-
-    if auth_header:
-        scheme, _, credentials = auth_header.partition(" ")
-
-        if scheme.lower() == "bearer":
-            token = credentials.strip()
-
-            if token:
-                return token
-
-    return None
-
-async def current_user(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """
-    验证当前请求的 Access Token，并返回 JWT Claims。
-    """
-
+async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
     token = extract_token(request)
-
     if not token:
-        raise AuthenticationError(
-            "Authentication required"
-        )
+        raise AuthenticationError('Authentication required')
+    payload = decode_token(token, expected_type='access')
+    if await revoked(db, token):
+        raise AuthenticationError('Token revoked')
+    if payload.get('type'):
+        try:
+            account = await db.get(User, int(payload['sub']))
+        except (ValueError, TypeError, KeyError):
+            account = None
+        if account is None:
+            raise AuthenticationError('User does not exist')
+    else:
+        username = payload.get('userNo')
+        if not isinstance(username, str) or not username.strip() or len(username) > 100:
+            raise AuthenticationError('Invalid userNo')
+        department = payload.get('org')
+        if department is not None and (not isinstance(department, str) or len(department) > 100):
+            raise AuthenticationError('Invalid org')
+        account = await provision_user(db, username, department=department or None)
+        if not account.department and department:
+            account.department = department
+            db.add(account)
+            await db.commit()
+    if not account.is_active:
+        raise AuthenticationError('User disabled')
+    request.state.access = await access_for(db, account)
+    return {**payload, 'userNo': account.username, 'org': account.department,
+            'local_user_id': account.id}
 
-    # 先验证 JWT 签名、过期时间和 token type
-    try:
-        payload = decode_token(
-            token,
-            expected_type="access",
-        )
-        print(payload)
-    except AuthenticationError as exc:
-        logger.warning(
-            "JWT authentication failed path=%s error=%s",
-            request.url.path,
-            type(exc).__name__,
-        )
-        raise AuthenticationError(
-            "Invalid or expired token"
-        ) from exc
 
-    return payload
+def require_permission(code: str):
+    async def dependency(request: Request, user: dict = Depends(current_user)):
+        if not request.state.access.allows(code):
+            raise AuthorizationError('没有访问此资源的权限')
+        return user
+    return dependency

@@ -84,8 +84,8 @@ def create_token(
     payload = {
         "sub": subject,
         "type": token_type,
-        # "iss": settings.jwt_issuer,
-        # "aud": settings.jwt_audience,
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
         "iat": now,
         "exp": exp,
         "jti": secrets.token_hex(16),
@@ -95,38 +95,39 @@ def create_token(
     return jwt.encode(payload, _signing_key(), algorithm=settings.jwt_algorithm)
 
 
-def decode_token(
-    token: str,
-    expected_type: Optional[str] = None,
-) -> dict:
-    """Decode and validate a JWT, optionally checking the token type claim."""
+def decode_token(token: str, expected_type: Optional[str] = None) -> dict:
+    """Validate local tokens strictly; retain signed external userNo/org tokens."""
     settings = get_settings()
-    key = (
-        settings.jwt_public_key
-        if settings.jwt_algorithm == "RS256"
-        else settings.jwt_secret_key
-    )
-
-    deconded_key=base64.b64decode(key)
-    print(f"jwt_secret_key,{deconded_key},token is value,{token}，{settings.jwt_secret_key}")
     try:
-        # 尝试用 base64 解码后的密钥验签
-        decoded_key = base64.b64decode(settings.jwt_secret_key)
-        payload = jwt.decode(
-            token,
-            decoded_key,
-            algorithms=["HS256"]
-        )
-    except Exception:
-        # 兜底：如果 base64 解码失败，说明 Java 端可能没用 JJWT，
-        # 或者密钥本身就是原始字节，直接用原始密钥
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret_key,
-            algorithms=["HS256"]
-        )
-
-    return payload
-
-    
-
+        keys = [_verification_key()]
+        if settings.jwt_algorithm == "HS256":
+            # Existing external integrations may sign with the literal configured key.
+            keys.append(settings.jwt_secret_key)
+        payload = None
+        for key in keys:
+            try:
+                payload = jwt.decode(token, key, algorithms=[settings.jwt_algorithm],
+                                     options={"verify_aud": False, "require": ["exp"]})
+                break
+            except jwt.InvalidSignatureError:
+                continue
+        if payload is None:
+            raise AuthenticationError("Invalid token signature")
+        token_type = payload.get("type")
+        if token_type is not None:
+            if expected_type and token_type != expected_type:
+                raise AuthenticationError("Invalid token type")
+            if token_type not in {"access", "refresh"}:
+                raise AuthenticationError("Invalid token type")
+            if not payload.get("sub"):
+                raise AuthenticationError("Invalid token subject")
+            if payload.get("iss") is not None and payload["iss"] != settings.jwt_issuer:
+                raise AuthenticationError("Invalid token issuer")
+            audience = payload.get("aud")
+            if audience is not None and settings.jwt_audience not in (audience if isinstance(audience, list) else [audience]):
+                raise AuthenticationError("Invalid token audience")
+        elif expected_type == "refresh" or not payload.get("userNo"):
+            raise AuthenticationError("Invalid token type")
+        return payload
+    except (jwt.PyJWTError, ValueError, TypeError) as exc:
+        raise AuthenticationError("Invalid or expired token") from exc

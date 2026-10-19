@@ -18,6 +18,7 @@ from app.utils.http_client import HTTPClient
 from app.utils.safety_guard import SafetyGuard, SafetyGuardError
 from app.services.user import get_principal, update_principal_id
 from app.models.models import ChatSession, ChatMessage
+from app.services.report_usage import track_report
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,7 @@ async def get_or_create_principal(user,
 # POST /api/industry/report
 # ============================================================
 
+@track_report
 async def industry_report(
     data: IndustryReportRequest,
     request: Request,
@@ -294,6 +296,7 @@ async def industry_report(
     """
     
     settings = get_settings()
+    usage = request.state.report_usage
     claims = user or {}
     userNo = str(claims.get("userNo") or claims.get("userNo") or "anonymous")
     user_department = claims.get("org")
@@ -313,6 +316,7 @@ async def industry_report(
     if session is None:
         session = ChatSession(
             user_id=userNo,
+            local_user_id=claims.get("local_user_id"),
             user_department=user_department,
             biz_key=data.bizKey,
             title=data.userInput[:255],
@@ -333,6 +337,10 @@ async def industry_report(
         message_type="text",
         user_id=userNo,
         user_department=user_department,
+        local_user_id=claims.get("local_user_id"),
+        business_type="industry_report",
+        is_stream=data.stream,
+        execution_status="processing",
         category="question",
         status="completed",
         metadata_json={
@@ -347,6 +355,7 @@ async def industry_report(
     await db.commit()
     await db.refresh(user_message)
     local_session_id, user_message_id = session.id, user_message.id
+    usage.message_id = user_message_id
 
     async def persist_assistant_message(
         content: str,
@@ -366,6 +375,7 @@ async def industry_report(
                 content=content,
                 message_type="text",
                 user_id=userNo,
+                local_user_id=claims.get("local_user_id"),
                 user_department=user_department,
                 category="answer",
                 parent_id=user_message_id,
@@ -400,11 +410,18 @@ async def industry_report(
                 extra={"user_id": userNo, "cache_key": cache_key},
             )
 
+    usage.cache_status = "miss" if cache else "unavailable"
     try:
         cached_result = await cache.get_json(cache_key) if cache else None
     except Exception:
+        usage.cache_status = "error"
         cached_result = None
         logger.warning("redis cache read failed", extra={"user_id": userNo, "cache_key": cache_key}, exc_info=True)
+    valid_cache = (data.stream and isinstance(cached_result, list)) or (not data.stream and isinstance(cached_result, dict))
+    if cached_result is not None and valid_cache:
+        usage.cache_status = "hit"
+        usage.request_id = f"cache:{question_hash}"
+    await usage.write()
     if cached_result is not None and data.stream and isinstance(cached_result, list):
         async def cached_stream():
             cached_text: list[str] = []
@@ -412,6 +429,8 @@ async def industry_report(
                 if isinstance(event, dict):
                     cached_text.append(_event_text(str(event.get("data", ""))))
                 yield event
+            if any(_is_message_completed(e.get("event"), str(e.get("data", "")))[0] for e in cached_result if isinstance(e, dict)):
+                usage.result("success")
             await persist_assistant_message(
                 "".join(cached_text),
                 f"cache:{question_hash}",
@@ -437,8 +456,10 @@ async def industry_report(
                 "cache_key": cache_key,
             },
         )
+        usage.result("success")
         return cached_result
     
+    usage.stage = "safety"
     guard = SafetyGuard(settings)
 
     if settings.safety_filter_enabled:
@@ -488,11 +509,15 @@ async def industry_report(
     # cache_ttl = max(1, int(getattr(settings, "redis_cache_ttl", 86400) or 86400))
 
     # 1. 定义缓存 Key（使用冒号分隔的命名空间规范，便于后续管理和排查）
+    usage.stage = "upstream"
     cache_userno = f"principal:{userNo}"
 
     # 2. 优先尝试从 Redis 缓存中获取 principal_id
     if cache:
-        cached_principal_id = await cache.get_json(cache_userno)
+        try:
+            cached_principal_id = await cache.get_json(cache_userno)
+        except Exception:
+            cached_principal_id = None
         if cached_principal_id:
             # 缓存命中，直接反序列化并返回，跳过数据库查询
             principal_id =cached_principal_id
@@ -589,6 +614,7 @@ async def industry_report(
 
 
       # ✅ 正确：用 [] 访问字典
+    request_id = None
     if async_result.get("success"):
         result_data = async_result.get("data") or {}
         request_id = result_data.get("requestId") or result_data.get("request_id")
@@ -610,6 +636,8 @@ async def industry_report(
             detail="上游未返回 requestId",
         )
     
+    usage.request_id = str(request_id)
+    await usage.write()
     if not data.stream and not settings.nonstream_use:
         messages_target = (
             f"{settings.external_api_url.rstrip('/')}"
@@ -725,7 +753,14 @@ async def industry_report(
             metadata={"source": "upstream_nonstream", "cache_hit": False},
         )
         if run_status == "COMPLETED":
+            usage.result("success")
             await store_cache(messages_result)
+        elif run_status == "CANCELLED":
+            usage.result("interrupted", "UPSTREAM_CANCELLED", "上游取消任务")
+        elif run_status == "FAILED":
+            usage.result("failed", "UPSTREAM_FAILED", "上游任务失败")
+        else:
+            usage.result("failed", "POLL_TIMEOUT", "查询结果超时，未确认任务完成")
         logger.info("run/messages final result: %s", messages_result)
         return messages_result
 
@@ -763,6 +798,7 @@ async def industry_report(
                 "cache_hit": False,
             },
         )
+        usage.result("success")
         await store_cache(messages_result)
         logger.info("non-stream upstream SSE final result: %s", messages_result)
         return messages_result
@@ -1135,6 +1171,13 @@ async def industry_report(
                     "error": error_message,
                 },
             )
+
+            if cancelled:
+                usage.result("interrupted", "CLIENT_DISCONNECTED", "客户端中断请求")
+            elif completed and message_completed:
+                usage.result("success")
+            else:
+                usage.result("failed", "INCOMPLETE_STREAM", "上游未返回有效完成事件")
 
             # Persist only after a real upstream business completion.
             if completed and message_completed and not cancelled:

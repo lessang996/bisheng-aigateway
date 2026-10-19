@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.apis.deps import current_user
+from app.apis.deps import require_permission
 from app.db.session import get_db
 from app.schemas import IndustryReportRequest
 from app.services.chat_service import industry_report as create_industry_report
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api", tags=["api"])
 async def industry_report(
     data: IndustryReportRequest,
     request: Request,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("report:use")),
     db: AsyncSession = Depends(get_db),
     http_client: HTTPClient = Depends(
         get_http_client

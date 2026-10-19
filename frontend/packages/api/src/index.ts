@@ -18,7 +18,8 @@ export class ApiClient {
     }
 
     if (!response.ok) {
-      throw new Error(`请求失败（${response.status}）`)
+      const body = await response.json().catch(() => null) as { detail?: unknown; message?: string } | null
+      throw new Error(typeof body?.detail === 'string' ? body.detail : body?.message || `请求失败（${response.status}）`)
     }
 
     return response.json() as Promise<T>

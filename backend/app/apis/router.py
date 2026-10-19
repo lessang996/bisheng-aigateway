@@ -9,3 +9,6 @@ api_router.include_router(chat.router)
 api_router.include_router(stats.router)
 api_router.include_router(admin.router)
 api_router.include_router(health.router)
+
+from app.apis.v1 import rbac
+api_router.include_router(rbac.router)

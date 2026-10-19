@@ -144,6 +144,8 @@ class SafetyGuard:
             f"{self.settings.safety_base_url.rstrip('/')}"
             f"/llm/{endpoint}?{query}"
         )
+        if self.settings.safety_template_id:
+            payload["templateId"] = self.settings.safety_template_id
         logger.info("安全护栏请求 endpoint=%s", endpoint)
         try:
             response = await self.client.post(
@@ -153,8 +155,10 @@ class SafetyGuard:
                 },
                 headers=headers,
             )
+          
             response.raise_for_status()
             result = response.json()
+            logger.info(f"安全围栏返回内容--{result}")
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning(
                 "安全护栏请求失败 endpoint=%s error=%s",
@@ -164,6 +168,7 @@ class SafetyGuard:
             raise SafetyGuardError("安全护栏请求失败") from exc
 
         # ---- 业务状态码校验（兼容 ret_code/code 两种字段命名）----
+
         ret_code = str(result.get("ret_code", result.get("code", 0)))
         if ret_code != "0":
             logger.warning("安全护栏返回失败 endpoint=%s code=%s", endpoint, ret_code)
